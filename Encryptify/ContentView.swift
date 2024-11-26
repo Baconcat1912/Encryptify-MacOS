@@ -12,8 +12,10 @@ struct ContentView: View {
     @State private var passphrase: String = ""
     @State private var iterations: String = ""
     @State private var encryptionStatus: String = ""
-    @State private var selectedAlgorithm: String = "aes-256-cbc" // Default algorithm
-    @AppStorage("lastUsedAlgorithm") private var lastUsedAlgorithm: String = "aes-256-cbc" // Remember the algorithm
+    @State private var progress: Double = 0.0
+    @State private var isProcessing: Bool = false
+    @State private var fileHistory: [String] = []
+    @AppStorage("lastUsedAlgorithm") private var lastUsedAlgorithm: String = "aes-256-cbc"
 
     let algorithms: [String: String] = [
         "aes-256-cbc": "AES-256-CBC (default, highly secure)",
@@ -35,42 +37,72 @@ struct ContentView: View {
                 Text("Selected Folder: \(inputFolder.lastPathComponent)")
             }
 
-            Picker("Encryption Algorithm", selection: $selectedAlgorithm) {
-                ForEach(algorithms.keys.sorted(), id: \.self) { key in
-                    Text(algorithms[key] ?? key).tag(key)
+            // Dropdown menu for selecting the encryption algorithm
+            VStack {
+                Text("Encryption Algorithm").fontWeight(.bold)
+                Picker("Encryption Algorithm", selection: $lastUsedAlgorithm) {
+                    ForEach(algorithms.keys.sorted(), id: \.self) { key in
+                        Text(algorithms[key] ?? key).tag(key)
+                    }
                 }
+                .pickerStyle(MenuPickerStyle()) // Changes to dropdown
+                .padding()
             }
-            .pickerStyle(MenuPickerStyle())
-            .onChange(of: selectedAlgorithm) { newValue in
-                lastUsedAlgorithm = newValue
-            }
-            .padding()
 
             SecureField("Enter Passphrase", text: $passphrase)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
+                .onChange(of: passphrase) { _ in validatePassphrase() }
                 .padding()
 
             SecureField("Enter Iterations (Used to derive keys)", text: $iterations)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .padding()
 
+            ProgressView(value: progress)
+                .progressViewStyle(LinearProgressViewStyle())
+                .padding()
+
             Button("Start Process") {
                 if let file = inputFile {
-                    processFile(file)
+                    startProcessing { processFile(file) }
                 } else if let folder = inputFolder {
-                    processFolder(folder)
+                    startProcessing { processFolder(folder) }
                 }
             }
-            .disabled((inputFile == nil && inputFolder == nil) || passphrase.isEmpty || iterations.isEmpty)
+            .disabled(isProcessing || passphrase.isEmpty || iterations.isEmpty)
 
             Text(encryptionStatus)
                 .foregroundColor(encryptionStatus.contains("Error") ? .red : .green)
                 .padding()
+
+            List(fileHistory, id: \.self) { file in
+                Text(file)
+            }
+            .frame(height: 100)
+
+            Spacer()
         }
         .padding()
-        .frame(width: 400, height: 450)
-        .onAppear {
-            selectedAlgorithm = lastUsedAlgorithm
+        .frame(width: 500, height: 600)
+    }
+
+    func validatePassphrase() {
+        guard passphrase.count >= 8 else {
+            encryptionStatus = "Error: Passphrase must be at least 8 characters"
+            return
+        }
+        encryptionStatus = ""
+    }
+
+    func startProcessing(_ action: @escaping () -> Void) {
+        isProcessing = true
+        progress = 0.0
+        DispatchQueue.global(qos: .userInitiated).async {
+            action()
+            DispatchQueue.main.async {
+                isProcessing = false
+                progress = 1.0
+            }
         }
     }
 
@@ -91,11 +123,16 @@ struct ContentView: View {
     }
 
     func processFile(_ file: URL) {
-        let isEncrypted = file.pathExtension == "enc"
-        if isEncrypted {
-            decryptFile(file)
-        } else {
-            encryptFile(file)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let isEncrypted = file.pathExtension == "enc"
+            if isEncrypted {
+                decryptFile(file)
+            } else {
+                encryptFile(file)
+            }
+            DispatchQueue.main.async {
+                fileHistory.append(file.lastPathComponent)
+            }
         }
     }
 
@@ -106,9 +143,13 @@ struct ContentView: View {
             for file in files {
                 processFile(file)
             }
-            encryptionStatus = "Processing of folder completed."
+            DispatchQueue.main.async {
+                encryptionStatus = "Processing of folder completed."
+            }
         } catch {
-            encryptionStatus = "Error: Failed to read folder contents"
+            DispatchQueue.main.async {
+                encryptionStatus = "Error: Failed to read folder contents"
+            }
         }
     }
 
@@ -123,7 +164,7 @@ struct ContentView: View {
         let encryptedFile = file.appendingPathExtension("enc")
 
         process.arguments = [
-            "enc", "-\(selectedAlgorithm)", "-salt", "-pbkdf2",
+            "enc", "-\(lastUsedAlgorithm)", "-salt", "-pbkdf2",
             "-iter", "\(iterationsInt)",
             "-in", file.path,
             "-out", encryptedFile.path,
@@ -135,12 +176,18 @@ struct ContentView: View {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 try FileManager.default.removeItem(at: file)
-                encryptionStatus = "Encryption successful: \(encryptedFile.lastPathComponent)"
+                DispatchQueue.main.async {
+                    encryptionStatus = "Encryption successful: \(encryptedFile.lastPathComponent)"
+                }
             } else {
-                encryptionStatus = "Error: Encryption failed"
+                DispatchQueue.main.async {
+                    encryptionStatus = "Error: Encryption failed"
+                }
             }
         } catch {
-            encryptionStatus = "Error: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                encryptionStatus = "Error: \(error.localizedDescription)"
+            }
         }
     }
 
@@ -155,7 +202,7 @@ struct ContentView: View {
         let decryptedFile = file.deletingPathExtension()
 
         process.arguments = [
-            "enc", "-d", "-\(selectedAlgorithm)", "-pbkdf2",
+            "enc", "-d", "-\(lastUsedAlgorithm)", "-pbkdf2",
             "-iter", "\(iterationsInt)",
             "-in", file.path,
             "-out", decryptedFile.path,
@@ -167,18 +214,24 @@ struct ContentView: View {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 try FileManager.default.removeItem(at: file)
-                encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
+                DispatchQueue.main.async {
+                    encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
+                }
             } else {
                 if FileManager.default.fileExists(atPath: decryptedFile.path) {
                     try FileManager.default.removeItem(at: decryptedFile)
                 }
-                encryptionStatus = "Error: Incorrect password or iterations"
+                DispatchQueue.main.async {
+                    encryptionStatus = "Error: Incorrect password or iterations"
+                }
             }
         } catch {
             if FileManager.default.fileExists(atPath: decryptedFile.path) {
                 try? FileManager.default.removeItem(at: decryptedFile)
             }
-            encryptionStatus = "Error: \(error.localizedDescription)"
+            DispatchQueue.main.async {
+                encryptionStatus = "Error: \(error.localizedDescription)"
+            }
         }
     }
 }
