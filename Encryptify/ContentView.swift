@@ -28,7 +28,12 @@ struct ContentView: View {
         "aes-128-cbc": "AES-128-CBC (faster, less secure than 256-bit)",
         "des-cbc": "DES-CBC (legacy, not recommended)",
         "bf-cbc": "Blowfish-CBC (legacy, not recommended)",
-        "aes-256-ecb": "AES-256-ECB (not recommended, no IV support)"
+        "aes-256-ecb": "AES-256-ECB (not recommended, no IV support)",
+        "des": "DES (legacy, not recommended)",
+        "rc4": "RC4 (legacy, not recommended)",
+        "seed": "SEED (legacy, not recommended)",
+        "camellia-128-cbc": "CAMELLIA-128-CBC(Japanese AES)",
+        "camellia-256-cbc": "CAMELLIA-256-CBC (Japanese AES)"
     ]
 
     var body: some View {
@@ -131,7 +136,7 @@ struct ContentView: View {
         
         // Passphrase and iteration confirmation fields
         let passphraseField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        let iterationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let iterationField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         let stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
         stackView.orientation = .vertical
         stackView.addArrangedSubview(passphraseField)
@@ -235,7 +240,7 @@ struct ContentView: View {
                 try FileManager.default.removeItem(at: file)
                 encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
             } else {
-                encryptionStatus = "Error: Incorrect password or iterations"
+                encryptionStatus = "Error: File not found or Incorrect password/iterations"
             }
         } catch {
             encryptionStatus = "Error: \(error.localizedDescription)"
@@ -264,7 +269,7 @@ struct ContentView: View {
 
         // Passphrase and iteration fields
         let passphraseField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
-        let iterationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let iterationField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
         let stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
         stackView.orientation = .vertical
         stackView.addArrangedSubview(passphraseField)
@@ -308,4 +313,3 @@ struct ContentView: View {
         }
     }
 }
-
