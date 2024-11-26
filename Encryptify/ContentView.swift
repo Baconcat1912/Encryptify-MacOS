@@ -12,6 +12,16 @@ struct ContentView: View {
     @State private var passphrase: String = ""
     @State private var iterations: String = ""
     @State private var encryptionStatus: String = ""
+    @State private var selectedAlgorithm: String = "aes-256-cbc" // Default algorithm
+    @AppStorage("lastUsedAlgorithm") private var lastUsedAlgorithm: String = "aes-256-cbc" // Remember the algorithm
+
+    let algorithms: [String: String] = [
+        "aes-256-cbc": "AES-256-CBC (default, highly secure)",
+        "aes-128-cbc": "AES-128-CBC (faster, less secure than 256-bit)",
+        "des-cbc": "DES-CBC (legacy, not recommended)",
+        "bf-cbc": "Blowfish-CBC (legacy, not recommended)",
+        "aes-256-ecb": "AES-256-ECB (not recommended, no IV support)"
+    ]
 
     var body: some View {
         VStack(spacing: 20) {
@@ -25,11 +35,22 @@ struct ContentView: View {
                 Text("Selected Folder: \(inputFolder.lastPathComponent)")
             }
 
+            Picker("Encryption Algorithm", selection: $selectedAlgorithm) {
+                ForEach(algorithms.keys.sorted(), id: \.self) { key in
+                    Text(algorithms[key] ?? key).tag(key)
+                }
+            }
+            .pickerStyle(MenuPickerStyle())
+            .onChange(of: selectedAlgorithm) { newValue in
+                lastUsedAlgorithm = newValue
+            }
+            .padding()
+
             SecureField("Enter Passphrase", text: $passphrase)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .padding()
 
-            TextField("Enter Iterations (Used to derive keys)", text: $iterations)
+            SecureField("Enter Iterations (Used to derive keys)", text: $iterations)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .padding()
 
@@ -47,7 +68,10 @@ struct ContentView: View {
                 .padding()
         }
         .padding()
-        .frame(width: 400, height: 400)
+        .frame(width: 400, height: 450)
+        .onAppear {
+            selectedAlgorithm = lastUsedAlgorithm
+        }
     }
 
     func selectInput() {
@@ -99,7 +123,7 @@ struct ContentView: View {
         let encryptedFile = file.appendingPathExtension("enc")
 
         process.arguments = [
-            "enc", "-aes-256-cbc", "-salt", "-pbkdf2",
+            "enc", "-\(selectedAlgorithm)", "-salt", "-pbkdf2",
             "-iter", "\(iterationsInt)",
             "-in", file.path,
             "-out", encryptedFile.path,
@@ -131,7 +155,7 @@ struct ContentView: View {
         let decryptedFile = file.deletingPathExtension()
 
         process.arguments = [
-            "enc", "-d", "-aes-256-cbc", "-pbkdf2",
+            "enc", "-d", "-\(selectedAlgorithm)", "-pbkdf2",
             "-iter", "\(iterationsInt)",
             "-in", file.path,
             "-out", decryptedFile.path,
@@ -145,14 +169,12 @@ struct ContentView: View {
                 try FileManager.default.removeItem(at: file)
                 encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
             } else {
-                // Delete the partially created decrypted file if it exists
                 if FileManager.default.fileExists(atPath: decryptedFile.path) {
                     try FileManager.default.removeItem(at: decryptedFile)
                 }
                 encryptionStatus = "Error: Incorrect password or iterations"
             }
         } catch {
-            // Delete the partially created decrypted file if it exists
             if FileManager.default.fileExists(atPath: decryptedFile.path) {
                 try? FileManager.default.removeItem(at: decryptedFile)
             }
