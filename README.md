@@ -3,4 +3,5 @@ Download as zip, extract, and open as an XCode Project, or download a prebuilt r
 
 If you appreciate this project, please consider donating!
 BTC: bc1q59yavwxund8vspl4vhqq3vhahaf32nacypd2vp
+
 LTC: ltc1qvt53fwgwac2gmwrych24ztdcmq67f2azuzz75e
