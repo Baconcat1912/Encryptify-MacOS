@@ -6,15 +6,21 @@
 //
 import SwiftUI
 
+// Define a struct for file history
+struct FileHistoryItem: Codable, Equatable, Identifiable {
+    var id: UUID = UUID() // Unique identifier for each item
+    let fileName: String
+    let action: String
+    let algorithm: String
+}
+
 struct ContentView: View {
     @State private var inputFile: URL?
     @State private var inputFolder: URL?
     @State private var passphrase: String = ""
     @State private var iterations: String = ""
     @State private var encryptionStatus: String = ""
-    @State private var progress: Double = 0.0
-    @State private var isProcessing: Bool = false
-    @State private var fileHistory: [String] = []
+    @State private var fileHistory: [FileHistoryItem] = []
     @AppStorage("lastUsedAlgorithm") private var lastUsedAlgorithm: String = "aes-256-cbc"
 
     let algorithms: [String: String] = [
@@ -45,65 +51,59 @@ struct ContentView: View {
                         Text(algorithms[key] ?? key).tag(key)
                     }
                 }
-                .pickerStyle(MenuPickerStyle()) // Changes to dropdown
+                .pickerStyle(MenuPickerStyle()) // Dropdown menu style
                 .padding()
             }
 
             SecureField("Enter Passphrase", text: $passphrase)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
-                .onChange(of: passphrase) { _ in validatePassphrase() }
                 .padding()
 
             SecureField("Enter Iterations (Used to derive keys)", text: $iterations)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .padding()
 
-            ProgressView(value: progress)
-                .progressViewStyle(LinearProgressViewStyle())
-                .padding()
-
             Button("Start Process") {
                 if let file = inputFile {
-                    startProcessing { processFile(file) }
+                    processFile(file)
                 } else if let folder = inputFolder {
-                    startProcessing { processFolder(folder) }
+                    processFolder(folder)
                 }
             }
-            .disabled(isProcessing || passphrase.isEmpty || iterations.isEmpty)
+            .disabled(passphrase.isEmpty || iterations.isEmpty)
 
             Text(encryptionStatus)
                 .foregroundColor(encryptionStatus.contains("Error") ? .red : .green)
                 .padding()
 
-            List(fileHistory, id: \.self) { file in
-                Text(file)
+            // History list
+            List(fileHistory) { item in
+                Button(action: {
+                    reverseAction(for: item)
+                }) {
+                    Text("\(item.fileName) - \(item.action) using \(item.algorithm)")
+                }
             }
-            .frame(height: 100)
+            .frame(height: 150)
+
+            HStack {
+                Spacer()
+                Button("Clear History") {
+                    clearHistory()
+                }
+                .padding()
+                .foregroundColor(.red)
+                Spacer()
+            }
 
             Spacer()
         }
         .padding()
         .frame(width: 500, height: 600)
-    }
-
-    func validatePassphrase() {
-        guard passphrase.count >= 8 else {
-            encryptionStatus = "Error: Passphrase must be at least 8 characters"
-            return
+        .onAppear {
+            loadHistory()
         }
-        encryptionStatus = ""
-    }
-
-    func startProcessing(_ action: @escaping () -> Void) {
-        isProcessing = true
-        progress = 0.0
-        DispatchQueue.global(qos: .userInitiated).async {
-            action()
-            DispatchQueue.main.async {
-                isProcessing = false
-                progress = 1.0
-            }
-        }
+        .onChange(of: fileHistory) { _ in saveHistory() }
     }
 
     func selectInput() {
@@ -122,34 +122,59 @@ struct ContentView: View {
         }
     }
 
-    func processFile(_ file: URL) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            let isEncrypted = file.pathExtension == "enc"
-            if isEncrypted {
-                decryptFile(file)
-            } else {
-                encryptFile(file)
-            }
-            DispatchQueue.main.async {
-                fileHistory.append(file.lastPathComponent)
-            }
+    func verifyInputs() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "Confirm Passphrase and Iterations"
+        alert.informativeText = "Re-enter the passphrase and iterations to confirm."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        
+        // Passphrase and iteration confirmation fields
+        let passphraseField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let iterationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        stackView.orientation = .vertical
+        stackView.addArrangedSubview(passphraseField)
+        stackView.addArrangedSubview(iterationField)
+        alert.accessoryView = stackView
+        
+        if alert.runModal() == .alertFirstButtonReturn {
+            return passphraseField.stringValue == passphrase &&
+                   iterationField.stringValue == iterations
         }
+        return false
+    }
+
+    func processFile(_ file: URL) {
+        guard verifyInputs() else {
+            encryptionStatus = "Error: Passphrase or iterations do not match."
+            return
+        }
+
+        let isEncrypted = file.pathExtension == "enc"
+        if isEncrypted {
+            decryptFile(file)
+        } else {
+            encryptFile(file)
+        }
+        fileHistory.append(FileHistoryItem(fileName: file.lastPathComponent, action: isEncrypted ? "Decrypted" : "Encrypted", algorithm: lastUsedAlgorithm))
     }
 
     func processFolder(_ folder: URL) {
+        guard verifyInputs() else {
+            encryptionStatus = "Error: Passphrase or iterations do not match."
+            return
+        }
+
         let fileManager = FileManager.default
         do {
             let files = try fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
             for file in files {
                 processFile(file)
             }
-            DispatchQueue.main.async {
-                encryptionStatus = "Processing of folder completed."
-            }
+            encryptionStatus = "Processing of folder completed."
         } catch {
-            DispatchQueue.main.async {
-                encryptionStatus = "Error: Failed to read folder contents"
-            }
+            encryptionStatus = "Error: Failed to read folder contents"
         }
     }
 
@@ -176,18 +201,12 @@ struct ContentView: View {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 try FileManager.default.removeItem(at: file)
-                DispatchQueue.main.async {
-                    encryptionStatus = "Encryption successful: \(encryptedFile.lastPathComponent)"
-                }
+                encryptionStatus = "Encryption successful: \(encryptedFile.lastPathComponent)"
             } else {
-                DispatchQueue.main.async {
-                    encryptionStatus = "Error: Encryption failed"
-                }
+                encryptionStatus = "Error: Encryption failed"
             }
         } catch {
-            DispatchQueue.main.async {
-                encryptionStatus = "Error: \(error.localizedDescription)"
-            }
+            encryptionStatus = "Error: \(error.localizedDescription)"
         }
     }
 
@@ -214,24 +233,79 @@ struct ContentView: View {
             process.waitUntilExit()
             if process.terminationStatus == 0 {
                 try FileManager.default.removeItem(at: file)
-                DispatchQueue.main.async {
-                    encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
-                }
+                encryptionStatus = "Decryption successful: \(decryptedFile.lastPathComponent)"
             } else {
-                if FileManager.default.fileExists(atPath: decryptedFile.path) {
-                    try FileManager.default.removeItem(at: decryptedFile)
-                }
-                DispatchQueue.main.async {
-                    encryptionStatus = "Error: Incorrect password or iterations"
-                }
+                encryptionStatus = "Error: Incorrect password or iterations"
             }
         } catch {
-            if FileManager.default.fileExists(atPath: decryptedFile.path) {
-                try? FileManager.default.removeItem(at: decryptedFile)
+            encryptionStatus = "Error: \(error.localizedDescription)"
+        }
+    }
+
+    func reverseAction(for item: FileHistoryItem) {
+        // Append `.enc` if the action was "Encrypted"
+        let matchingFile: URL?
+        if item.action == "Encrypted" {
+            matchingFile = inputFolder?.appendingPathComponent(item.fileName + ".enc") ?? inputFile?.deletingLastPathComponent().appendingPathComponent(item.fileName + ".enc")
+        } else {
+            matchingFile = inputFolder?.appendingPathComponent(item.fileName) ?? inputFile?.deletingLastPathComponent().appendingPathComponent(item.fileName)
+        }
+
+        guard let file = matchingFile else { return }
+
+        passphrase = ""
+        iterations = ""
+
+        let alert = NSAlert()
+        alert.messageText = "Reverse \(item.action)"
+        alert.informativeText = "Enter the passphrase and iteration count for this action."
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+
+        // Passphrase and iteration fields
+        let passphraseField = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let iterationField = NSTextField(frame: NSRect(x: 0, y: 0, width: 200, height: 24))
+        let stackView = NSStackView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        stackView.orientation = .vertical
+        stackView.addArrangedSubview(passphraseField)
+        stackView.addArrangedSubview(iterationField)
+        alert.accessoryView = stackView
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            passphrase = passphraseField.stringValue
+            iterations = iterationField.stringValue
+
+            if item.action == "Encrypted" {
+                decryptFile(file)
+            } else {
+                encryptFile(file)
             }
-            DispatchQueue.main.async {
-                encryptionStatus = "Error: \(error.localizedDescription)"
+        }
+    }
+
+
+    func clearHistory() {
+        fileHistory.removeAll()
+        saveHistory()
+    }
+
+    func saveHistory() {
+        do {
+            let data = try JSONEncoder().encode(fileHistory)
+            UserDefaults.standard.set(data, forKey: "fileHistory")
+        } catch {
+            print("Failed to save history: \(error)")
+        }
+    }
+
+    func loadHistory() {
+        if let data = UserDefaults.standard.data(forKey: "fileHistory") {
+            do {
+                fileHistory = try JSONDecoder().decode([FileHistoryItem].self, from: data)
+            } catch {
+                print("Failed to load history: \(error)")
             }
         }
     }
 }
+
