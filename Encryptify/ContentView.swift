@@ -38,6 +38,14 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 20) {
+            Text("Drag a file or folder here").foregroundColor(.gray)
+                    .padding()
+                    .frame(maxWidth: .infinity, minHeight: 150)
+                    .background(Color.secondary.opacity(0.2))
+                    .cornerRadius(10)
+                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                        handleDrop(providers: providers)
+                    }
             Button("Select File or Folder") {
                 selectInput()
             }
@@ -104,7 +112,7 @@ struct ContentView: View {
             Spacer()
         }
         .padding()
-        .frame(width: 500, height: 600)
+        .frame(minWidth: 500, minHeight: 700)
         .onAppear {
             loadHistory()
         }
@@ -125,6 +133,22 @@ struct ContentView: View {
                 inputFolder = nil
             }
         }
+    }
+    func handleDrop(providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else { return false }
+        provider.loadItem(forTypeIdentifier: "public.file-url", options: nil) { (item, error) in
+            guard let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+            DispatchQueue.main.async {
+                if url.hasDirectoryPath {
+                    inputFolder = url
+                    inputFile = nil
+                } else {
+                    inputFile = url
+                    inputFolder = nil
+                }
+            }
+        }
+        return true
     }
 
     func verifyInputs() -> Bool {
