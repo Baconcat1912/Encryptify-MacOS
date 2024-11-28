@@ -39,13 +39,13 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 20) {
             Text("Drag a file or folder here").foregroundColor(.gray)
-                    .padding()
-                    .frame(maxWidth: .infinity, minHeight: 150)
-                    .background(Color.secondary.opacity(0.2))
-                    .cornerRadius(10)
-                    .onDrop(of: [.fileURL], isTargeted: nil) { providers in
-                        handleDrop(providers: providers)
-                    }
+                .padding()
+                .frame(maxWidth: .infinity, minHeight: 150)
+                .background(Color.secondary.opacity(0.2))
+                .cornerRadius(10)
+                .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                    handleDrop(providers: providers)
+                }
             Button("Select File or Folder") {
                 selectInput()
             }
@@ -54,18 +54,6 @@ struct ContentView: View {
                 Text("Selected File: \(inputFile.lastPathComponent)")
             } else if let inputFolder = inputFolder {
                 Text("Selected Folder: \(inputFolder.lastPathComponent)")
-            }
-
-            // Dropdown menu for selecting the encryption algorithm
-            VStack {
-                Text("Encryption Algorithm").fontWeight(.bold)
-                Picker("Encryption Algorithm", selection: $lastUsedAlgorithm) {
-                    ForEach(algorithms.keys.sorted(), id: \.self) { key in
-                        Text(algorithms[key] ?? key).tag(key)
-                    }
-                }
-                .pickerStyle(MenuPickerStyle()) // Dropdown menu style
-                .padding()
             }
 
             SecureField("Enter Passphrase", text: $passphrase)
@@ -89,29 +77,49 @@ struct ContentView: View {
                 .foregroundColor(encryptionStatus.contains("Error") ? .red : .green)
                 .padding()
 
-            // History list
-            List(fileHistory) { item in
-                Button(action: {
-                    reverseAction(for: item)
-                }) {
-                    Text("\(item.fileName) - \(item.action) using \(item.algorithm)")
+            // Options Menu for Algorithm and History
+            Menu {
+                Menu("Encryption Algorithm") {
+                    Picker("Select Algorithm", selection: $lastUsedAlgorithm) {
+                        ForEach(algorithms.keys.sorted(), id: \.self) { key in
+                            Text(algorithms[key] ?? key).tag(key)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(InlinePickerStyle())
                 }
-            }
-            .frame(height: 150)
-
-            HStack {
-                Spacer()
-                Button("Clear History") {
-                    clearHistory()
+                Menu("File History") {
+                    if fileHistory.isEmpty {
+                        Text("No history available").foregroundColor(.gray)
+                    } else {
+                        ForEach(fileHistory) { item in
+                            Button(action: {
+                                reverseAction(for: item)
+                            }) {
+                                Text("\(item.fileName) - \(item.action) (\(item.algorithm))")
+                            }
+                        }
+                    }
+                    Divider()
+                    Button("Clear History", role: .destructive) {
+                        clearHistory()
+                    }
                 }
+            } label: {
+                Button("Options") {
+                    // Triggers menu
+                }
+                .font(.headline)
                 .padding()
-                .foregroundColor(.red)
-                Spacer()
+                .background(Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(10)
             }
 
             Spacer()
         }
         .padding()
+
         .frame(minWidth: 500, minHeight: 700)
         .onAppear {
             loadHistory()
@@ -197,15 +205,34 @@ struct ContentView: View {
 
         let fileManager = FileManager.default
         do {
-            let files = try fileManager.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)
-            for file in files {
+            var allFiles: [URL] = []
+            
+            // Recursively enumerates files inside the folder, including subdirectories
+            let enumerator = fileManager.enumerator(at: folder, includingPropertiesForKeys: nil, options: .skipsHiddenFiles) { (url, error) -> Bool in
+                print("Error accessing \(url.path): \(error.localizedDescription)")
+                return true // Continue the enumeration despite errors
+            }
+
+            while let file = enumerator?.nextObject() as? URL {
+                if !file.hasDirectoryPath { allFiles.append(file) }
+            }
+
+            for file in allFiles {
                 processFile(file)
             }
-            encryptionStatus = "Processing of folder completed."
+
+            fileHistory.append(FileHistoryItem(
+                fileName: folder.lastPathComponent,
+                action: "Processed Folder",
+                algorithm: lastUsedAlgorithm
+            ))
+            encryptionStatus = "Processing of folder \(folder.lastPathComponent) completed."
         } catch {
-            encryptionStatus = "Error: Failed to read folder contents"
+            encryptionStatus = "Error: Failed to process folder contents"
         }
     }
+
+
 
     func encryptFile(_ file: URL) {
         guard let iterationsInt = Int(iterations) else {
